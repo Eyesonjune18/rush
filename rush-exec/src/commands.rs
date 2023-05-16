@@ -4,33 +4,22 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
-use anyhow::Result;
-
 use rush_state::console::Console;
 use rush_state::path::Path;
 use rush_state::shell::Shell;
 use rush_state::showln;
-
-use crate::errors::ExecutableError;
+use rush_error::RushError;
+use rush_error::exec_errors::{CommandError, CommandType, FilesystemError, TerminalError, RuntimeError};
 
 // Represents either a builtin (internal command) or an executable (external command)
 // A Runnable may be executed by calling its .run() method
 pub trait Runnable {
-    fn run(&self, shell: &mut Shell, console: &mut Console, arguments: Vec<&str>) -> Result<()>;
+    fn run(&self, shell: &mut Shell, console: &mut Console, arguments: Vec<String>) -> Result<(), Box<dyn RushError>>;
 }
 
 // Wrapper type for Vec<String> that makes it easier to read code related to Builtins
 pub struct Aliases {
     aliases: Vec<String>,
-}
-
-// * This implementation is here to make it easier to define aliases using string literals
-impl From<Vec<&str>> for Aliases {
-    fn from(aliases: Vec<&str>) -> Self {
-        Self {
-            aliases: aliases.iter().map(|a| a.to_string()).collect(),
-        }
-    }
 }
 
 impl Aliases {
@@ -43,17 +32,17 @@ impl Aliases {
 pub struct Builtin {
     pub true_name: String,
     pub aliases: Aliases,
-    function: Box<dyn Fn(&mut Shell, &mut Console, Vec<&str>) -> Result<()>>,
+    function: Box<dyn Fn(&mut Shell, &mut Console, Vec<String>) -> Result<(), Box<dyn RushError>>>,
 }
 
 impl Builtin {
-    pub fn new<F: Fn(&mut Shell, &mut Console, Vec<&str>) -> Result<()> + 'static>(
+    pub fn new<F: Fn(&mut Shell, &mut Console, Vec<String>) -> Result<(), Box<dyn RushError>> + 'static>(
         true_name: &str,
-        aliases: Vec<&str>,
+        aliases: Vec<String>,
         function: F,
     ) -> Self {
         let true_name = true_name.to_string();
-        let aliases = Aliases::from(aliases);
+        let aliases = Aliases { aliases };
         let function = Box::new(function);
 
         Self {
@@ -65,7 +54,7 @@ impl Builtin {
 }
 
 impl Runnable for Builtin {
-    fn run(&self, shell: &mut Shell, console: &mut Console, arguments: Vec<&str>) -> Result<()> {
+    fn run(&self, shell: &mut Shell, console: &mut Console, arguments: Vec<String>) -> Result<(), Box<dyn RushError>> {
         (self.function)(shell, console, arguments)
     }
 }
@@ -88,24 +77,34 @@ impl Executable {
 impl Runnable for Executable {
     // * Executables do not have access to the shell state, but the context argument is required by the Runnable trait
     // TODO: Remove as many .unwrap() calls as possible here
-    fn run(&self, _shell: &mut Shell, console: &mut Console, arguments: Vec<&str>) -> Result<()> {
+    fn run(&self, _shell: &mut Shell, console: &mut Console, args: Vec<String>) -> Result<(), Box<dyn RushError>> {
+        let exe_name = self.path.to_string();
+        // Convenience macro for creating and returning a CommandError
+        macro_rules! exe_error {
+            ($kind:expr, $name:expr, $args:expr) => {
+                return Err(Box::new(CommandError::new($kind, CommandType::Executable, $name, $args)))
+            }
+        }
+
         // Create the Process, pass the provided arguments to it, and execute it
         let Ok(mut process) = Process::new(self.path.path())
-            .args(arguments)
+            .args(&args)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
         else {
-            return Err(ExecutableError::PathNoLongerExists(self.path.path().clone()).into())
+            exe_error!(FilesystemError::PathNoLongerExists(self.path.path().clone()), &exe_name, args)
         };
 
         // Create channels for communication between threads
-        let (tx_stdout, rx_stdout) = mpsc::channel::<Result<String>>();
-        let (tx_stderr, rx_stderr) = mpsc::channel::<Result<String>>();
+        let (tx_stdout, rx_stdout) = mpsc::channel::<Result<String, Box<dyn RushError>>>();
+        let (tx_stderr, rx_stderr) = mpsc::channel::<Result<String, Box<dyn RushError>>>();
 
         // Spawn a thread to read stdout
         let stdout_thread = {
             let stdout = process.stdout.take().unwrap();
+            let stdout_exe_name = exe_name.clone();
+            let stdout_args = args.clone();
             thread::spawn(move || {
                 let reader = BufReader::new(stdout);
                 for line in reader.lines() {
@@ -114,13 +113,11 @@ impl Runnable for Executable {
                         Ok(line) => {
                             // If sending the line fails, return an error
                             if let Err(e) = tx_stdout.send(Ok(line)) {
-                                return Err(ExecutableError::FailedToParseStdout(e.to_string()));
+                                exe_error!(TerminalError::FailedToParseStdout(e.to_string()), &stdout_exe_name, stdout_args)
                             }
                         }
                         // If reading the line fails, return an error
-                        Err(e) => {
-                            return Err(ExecutableError::FailedToParseStdout(e.to_string()));
-                        }
+                        Err(e) => exe_error!(TerminalError::FailedToParseStdout(e.to_string()), &stdout_exe_name, stdout_args)
                     }
                 }
                 Ok(())
@@ -129,18 +126,18 @@ impl Runnable for Executable {
 
         let stderr_thread = {
             let stderr = process.stderr.take().unwrap();
+            let stderr_exe_name = exe_name.clone();
+            let stderr_args = args.clone();
             thread::spawn(move || {
                 let reader = BufReader::new(stderr);
                 for line in reader.lines() {
                     match line {
                         Ok(line) => {
                             if let Err(e) = tx_stderr.send(Ok(line)) {
-                                return Err(ExecutableError::FailedToParseStderr(e.to_string()));
+                                exe_error!(TerminalError::FailedToParseStderr(e.to_string()), &stderr_exe_name, stderr_args)
                             }
                         }
-                        Err(e) => {
-                            return Err(ExecutableError::FailedToParseStderr(e.to_string()));
-                        }
+                        Err(e) => exe_error!(TerminalError::FailedToParseStderr(e.to_string()), &stderr_exe_name, stderr_args),
                     }
                 }
                 Ok(())
@@ -199,8 +196,8 @@ impl Runnable for Executable {
         }
 
         // Wait for the threads to finish, if err, push it up the stack
-        stdout_thread.join().unwrap()?;
-        stderr_thread.join().unwrap()?;
+        stdout_thread.join().unwrap();
+        stderr_thread.join().unwrap();
 
         let status = process.wait().expect("Failed to wait on child process");
 
@@ -211,7 +208,7 @@ impl Runnable for Executable {
                 // * as per https://tldp.org/LDP/abs/html/exitcodes.html
                 // * It can be assumed that the command was found here because the External path must have been validated already
                 // * Otherwise it could be a 127 for "command not found"
-                Err(ExecutableError::FailedToExecute(status.code().unwrap_or(126) as isize).into())
+                exe_error!(RuntimeError::FailedToExecute(status.code().unwrap_or(126) as isize), &exe_name, args)
             }
         }
     }

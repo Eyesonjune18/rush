@@ -2,7 +2,7 @@ use anyhow::Result;
 
 use rush_eval::dispatcher::Dispatcher;
 use rush_eval::errors::DispatchError;
-use rush_state::console::{Console, restore_terminal};
+use rush_state::console::{restore_terminal, Console};
 use rush_state::shell::Shell;
 use rush_state::showln;
 

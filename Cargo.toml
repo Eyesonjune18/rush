@@ -4,6 +4,7 @@ members = [
     "rush-state",
     "rush-eval",
     "rush-exec",
+    "rush-error",
 ]
 
 [workspace.dependencies]

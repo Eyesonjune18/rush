@@ -1,5 +1,5 @@
-use std::os::unix::prelude::PermissionsExt;
 use anyhow::Result;
+use std::os::unix::prelude::PermissionsExt;
 extern crate clap;
 
 use rush_exec::builtins;
@@ -7,6 +7,7 @@ use rush_exec::commands::{Builtin, Executable, Runnable};
 use rush_state::console::Console;
 use rush_state::path::Path;
 use rush_state::shell::Shell;
+use rush_error::RushError;
 
 use crate::errors::DispatchError;
 use crate::parser;
@@ -23,22 +24,22 @@ impl Default for Dispatcher {
     fn default() -> Self {
         let mut dispatcher = Self::new();
 
-        dispatcher.add_builtin("test", vec!["t"], builtins::test);
-        dispatcher.add_builtin("exit", vec!["quit", "q"], builtins::exit);
-        dispatcher.add_builtin("working-directory", vec!["pwd", "wd"], builtins::working_directory);
-        dispatcher.add_builtin("change-directory", vec!["cd"], builtins::change_directory);
-        dispatcher.add_builtin("list-directory", vec!["directory", "list", "ls", "dir"], builtins::list_directory);
-        dispatcher.add_builtin("previous-directory", vec!["back", "b", "prev", "pd"], builtins::go_back);
-        dispatcher.add_builtin("next-directory", vec!["forward", "f", "next", "nd"], builtins::go_forward);
-        dispatcher.add_builtin("clear-terminal", vec!["clear", "cls"], builtins::clear_terminal);
-        dispatcher.add_builtin("make-file", vec!["create", "touch", "new", "mf"], builtins::make_file);
-        dispatcher.add_builtin("make-directory", vec!["mkdir", "md"], builtins::make_directory);
-        dispatcher.add_builtin("delete-file", vec!["delete", "remove", "rm", "del", "df"], builtins::delete_file);
-        dispatcher.add_builtin("read-file", vec!["read", "cat", "rf"], builtins::read_file);
-        dispatcher.add_builtin("run-executable", vec!["run", "exec", "re"], builtins::run_executable);
-        dispatcher.add_builtin("configure", vec!["config", "conf"], builtins::configure);
-        dispatcher.add_builtin("environment-variable", vec!["environment", "env", "ev"], builtins::environment_variable);
-        dispatcher.add_builtin("edit-path", vec!["path", "ep"], builtins::edit_path);
+        dispatcher.add_builtin("test", ["t"], builtins::test);
+        dispatcher.add_builtin("exit", ["quit", "q"], builtins::exit);
+        dispatcher.add_builtin("working-directory", ["pwd", "wd"], builtins::working_directory);
+        dispatcher.add_builtin("change-directory", ["cd"], builtins::change_directory);
+        dispatcher.add_builtin("list-directory", ["directory", "list", "ls", "dir"], builtins::list_directory);
+        dispatcher.add_builtin("previous-directory", ["back", "b", "prev", "pd"], builtins::previous_directory);
+        dispatcher.add_builtin("next-directory", ["forward", "f", "next", "nd"], builtins::next_directory);
+        dispatcher.add_builtin("clear-terminal", ["clear", "cls"], builtins::clear_terminal);
+        dispatcher.add_builtin("make-file", ["create", "touch", "new", "mf"], builtins::make_file);
+        dispatcher.add_builtin("make-directory", ["mkdir", "md"], builtins::make_directory);
+        dispatcher.add_builtin("delete-file", ["delete", "remove", "rm", "del", "df"], builtins::delete_file);
+        dispatcher.add_builtin("read-file", ["read", "cat", "rf"], builtins::read_file);
+        dispatcher.add_builtin("run-executable", ["run", "exec", "re"], builtins::run_executable);
+        dispatcher.add_builtin("configure", ["config", "conf"], builtins::configure);
+        dispatcher.add_builtin("environment-variable", ["environment", "env", "ev"], builtins::environment_variable);
+        dispatcher.add_builtin("edit-path", ["path", "ep"], builtins::edit_path);
 
         dispatcher
     }
@@ -52,12 +53,13 @@ impl Dispatcher {
     }
 
     // Adds a builtin to the Dispatcher
-    fn add_builtin<F: Fn(&mut Shell, &mut Console, Vec<&str>) -> Result<()> + 'static>(
+    fn add_builtin<F: Fn(&mut Shell, &mut Console, Vec<String>) -> Result<(), Box<dyn RushError>> + 'static, const N: usize>(
         &mut self,
         true_name: &str,
-        aliases: Vec<&str>,
+        aliases: [&str; N],
         function: F,
     ) {
+        let aliases = aliases.into_iter().map(str::to_owned).collect();
         self.commands
             .push(Builtin::new(true_name, aliases, function))
     }
@@ -84,12 +86,8 @@ impl Dispatcher {
         let mut results: Vec<Result<()>> = Vec::new();
 
         for (command_name, command_args) in commands {
-            // ? Is there a way to avoid this type conversion?
-            let command_name = command_name.as_str();
-            let command_args = command_args.iter().map(|a| a.as_str()).collect();
-
             // Dispatch the command to the Dispatcher
-            let result = self.dispatch(shell, console, command_name, command_args);
+            let result = self.dispatch(shell, console, &command_name, command_args.into());
             results.push(result);
         }
 
@@ -109,11 +107,13 @@ impl Dispatcher {
         shell: &mut Shell,
         console: &mut Console,
         command_name: &str,
-        command_args: Vec<&str>,
+        command_args: Vec<String>,
     ) -> Result<()> {
         // If the command resides in the Dispatcher (generally means it is a builtin) run it
         if let Some(command) = self.resolve(command_name) {
-            command.run(shell, console, command_args)
+            // $ FIX!
+            command.run(shell, console, command_args);
+            Ok(())
         } else {
             // If the command is not in the Dispatcher, try to run it as an executable from the PATH
             let path = Path::from_path_var(command_name, shell.env().PATH());
@@ -125,7 +125,9 @@ impl Dispatcher {
                     if permission_code & 0o111 == 0 {
                         Err(DispatchError::CommandNotExecutable(permission_code).into())
                     } else {
-                        Executable::new(path).run(shell, console, command_args)
+                        // $ FIX!
+                        Executable::new(path).run(shell, console, command_args);
+                        Ok(())
                     }
                 } else {
                     // If the file cannot be read, return an error

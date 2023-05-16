@@ -10,6 +10,7 @@ clap = { version = "4.2.4", features = ['derive'] }
 clap_builder = { version = "4.2.4" }
 rush-state = { path = "../rush-state" }
 rush-exec = { path = "../rush-exec" }
+rush-error = { path = "../rush-error" }
 thiserror.workspace = true
 anyhow.workspace = true
 fs-err.workspace = true

@@ -383,6 +383,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "rush-error"
+version = "0.1.0"
+
+[[package]]
 name = "rush-eval"
 version = "0.1.0"
 dependencies = [
@@ -390,6 +394,7 @@ dependencies = [
  "clap",
  "clap_builder",
  "fs-err",
+ "rush-error",
  "rush-exec",
  "rush-state",
  "thiserror",
@@ -402,6 +407,7 @@ dependencies = [
  "anyhow",
  "clap",
  "fs-err",
+ "rush-error",
  "rush-state",
  "thiserror",
 ]
