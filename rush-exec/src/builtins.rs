@@ -19,7 +19,7 @@ use rush_state::path::Path;
 use rush_state::shell::Shell;
 use rush_state::showln;
 use rush_error::RushError;
-use rush_error::exec_errors::{CommandError, CommandType, ArgumentError, FilesystemError, RuntimeError};
+use rush_error::exec_errors::{ExecError, CommandType, ArgumentError, FilesystemError, RuntimeError};
 
 use crate::commands::{Executable, Runnable};
 
@@ -45,10 +45,11 @@ macro_rules! builtin_name {
     }
 }
 
-// Convenience macro for creating and returning a CommandError
-macro_rules! cmd_error {
+// Convenience macro for creating and returning an ExecError
+// ? Should this just expand to the error value so it can be returned explicitly?
+macro_rules! exec_error {
     ($kind:expr, $args:expr) => {
-        return Err(Box::new(CommandError::new($kind, CommandType::Builtin, &builtin_name!(), $args.clone())))
+        return Err(RushError::from(ExecError::new($kind, CommandType::Builtin, &builtin_name!(), $args.clone())))
     }
 }
 
@@ -59,7 +60,7 @@ macro_rules! check_args {
         if $args.len() != $expected {
             let name = builtin_name!();
             showln!($console, "Usage: {} {}", name, $usage);
-            cmd_error!(ArgumentError::InvalidArgumentCount($expected, $args.len()), $args)
+            exec_error!(ArgumentError::InvalidArgumentCount($expected, $args.len()), $args)
         }
     };
     ($console:expr, $args:expr, $expected:literal) => {
@@ -71,7 +72,7 @@ pub fn test(
     _shell: &mut Shell,
     console: &mut Console,
     args: Vec<String>,
-) -> Result<(), Box<dyn RushError>> {
+) -> Result<(), RushError> {
     check_args!(console, args, 0);
     showln!(console, "Test command!");
     Ok(())
@@ -81,7 +82,7 @@ pub fn exit(
     _shell: &mut Shell,
     console: &mut Console,
     args: Vec<String>,
-) -> Result<(), Box<dyn RushError>> {
+) -> Result<(), RushError> {
     check_args!(console, args, 0);
     console.exit(0);
     Ok(())
@@ -91,7 +92,7 @@ pub fn working_directory(
     shell: &mut Shell,
     console: &mut Console,
     args: Vec<String>,
-) -> Result<(), Box<dyn RushError>> {
+) -> Result<(), RushError> {
     check_args!(console, args, 0);
     showln!(console, "{}", shell.env().CWD());
     Ok(())
@@ -101,12 +102,12 @@ pub fn change_directory(
     shell: &mut Shell,
     console: &mut Console,
     args: Vec<String>,
-) -> Result<(), Box<dyn RushError>> {
+) -> Result<(), RushError> {
     check_args!(console, args, 1, "<path>");
     let history_limit = shell.config_mut().history_limit;
     if let Err(_) = shell.env_mut().set_CWD(&args[0], history_limit) {
         showln!(console, "Invalid path: '{}'", args[0]);
-        cmd_error!(RuntimeError::FailedToRun, args)
+        exec_error!(RuntimeError::FailedToRun, args)
     }
 
     Ok(())
@@ -116,7 +117,7 @@ pub fn list_directory(
     shell: &mut Shell,
     console: &mut Console,
     args: Vec<String>,
-) -> Result<(), Box<dyn RushError>> {
+) -> Result<(), RushError> {
     let arguments = ListDirectoryArguments::parse_from(&args);
     let show_hidden = arguments.all;
     let path_to_read = match arguments.path {
@@ -126,7 +127,7 @@ pub fn list_directory(
 
     let read_dir_result = match fs_err::read_dir(&path_to_read) {
         Ok(v) => v,
-        Err(_) => cmd_error!(FilesystemError::FailedToReadDirectory(path_to_read), args),
+        Err(_) => exec_error!(FilesystemError::FailedToReadDirectory(path_to_read), args),
     };
 
     let mut directories = Vec::new();
@@ -135,17 +136,17 @@ pub fn list_directory(
     for dir_entry in read_dir_result {
         let fs_object = match dir_entry {
             Ok(v) => v,
-            Err(_) => cmd_error!(FilesystemError::FailedToReadDirectory(path_to_read), args),
+            Err(_) => exec_error!(FilesystemError::FailedToReadDirectory(path_to_read), args),
         };
 
         let fs_object_name = match fs_object.file_name().to_str() {
             Some(v) => String::from(v),
-            None => cmd_error!(FilesystemError::FailedToReadDirectory(path_to_read), args),
+            None => exec_error!(FilesystemError::FailedToReadDirectory(path_to_read), args),
         };
 
         let fs_object_type = match fs_object.file_type() {
             Ok(v) => v,
-            Err(_) => cmd_error!(FilesystemError::FailedToReadDirectory(path_to_read), args),
+            Err(_) => exec_error!(FilesystemError::FailedToReadDirectory(path_to_read), args),
         };
 
         if fs_object_name.starts_with('.') && !show_hidden {
@@ -177,11 +178,11 @@ pub fn previous_directory(
     shell: &mut Shell,
     console: &mut Console,
     args: Vec<String>,
-) -> Result<(), Box<dyn RushError>> {
+) -> Result<(), RushError> {
     check_args!(console, args, 0);
     if shell.env_mut().go_back().is_err() {
         showln!(console, "Previous directory does not exist or is invalid");
-        cmd_error!(RuntimeError::FailedToRun, args)
+        exec_error!(RuntimeError::FailedToRun, args)
     }
 
     Ok(())
@@ -191,11 +192,11 @@ pub fn next_directory(
     shell: &mut Shell,
     console: &mut Console,
     args: Vec<String>,
-) -> Result<(), Box<dyn RushError>> {
+) -> Result<(), RushError> {
     check_args!(console, args, 0);
     if shell.env_mut().go_forward().is_err() {
         showln!(console, "Next directory does not exist or is invalid");
-        cmd_error!(RuntimeError::FailedToRun, args)
+        exec_error!(RuntimeError::FailedToRun, args)
     }
     
     Ok(())
@@ -205,7 +206,7 @@ pub fn clear_terminal(
     _shell: &mut Shell,
     console: &mut Console,
     args: Vec<String>,
-) -> Result<(), Box<dyn RushError>> {
+) -> Result<(), RushError> {
     check_args!(console, args, 0);
     // $ FIX
     console.clear_output();
@@ -217,12 +218,12 @@ pub fn make_file(
     _shell: &mut Shell,
     console: &mut Console,
     args: Vec<String>,
-) -> Result<(), Box<dyn RushError>> {
+) -> Result<(), RushError> {
     check_args!(console, args, 1, "<path>");
     // TODO: Map fs_err errors to FilesystemError
     if fs_err::File::create(&args[0]).is_err() {
         showln!(console, "Failed to create file: '{}'", args[0]);
-        cmd_error!(RuntimeError::FailedToRun, args)
+        exec_error!(RuntimeError::FailedToRun, args)
     }
 
     Ok(())
@@ -232,11 +233,11 @@ pub fn make_directory(
     _shell: &mut Shell,
     console: &mut Console,
     args: Vec<String>,
-) -> Result<(), Box<dyn RushError>> {
+) -> Result<(), RushError> {
     check_args!(console, args, 1, "<path>");
     if fs_err::create_dir(&args[0]).is_err() {
         showln!(console, "Failed to create directory: '{}'", args[0]);
-        cmd_error!(RuntimeError::FailedToRun, args)
+        exec_error!(RuntimeError::FailedToRun, args)
     }
 
     Ok(())
@@ -246,11 +247,11 @@ pub fn delete_file(
     _shell: &mut Shell,
     console: &mut Console,
     args: Vec<String>,
-) -> Result<(), Box<dyn RushError>> {
+) -> Result<(), RushError> {
     check_args!(console, args, 1, "<path>");
     if fs_err::remove_file(&args[0]).is_err() {
         showln!(console, "Failed to delete file: '{}'", args[0]);
-        cmd_error!(RuntimeError::FailedToRun, args)
+        exec_error!(RuntimeError::FailedToRun, args)
     }
 
     Ok(())
@@ -260,12 +261,12 @@ pub fn read_file(
     _shell: &mut Shell,
     console: &mut Console,
     args: Vec<String>,
-) -> Result<(), Box<dyn RushError>> {
+) -> Result<(), RushError> {
     check_args!(console, args, 1);
     let file_name = args[0].to_string();
     let Ok(file) = fs_err::File::open(&file_name) else {
         showln!(console, "Failed to open file: '{}'", file_name);
-        cmd_error!(RuntimeError::FailedToRun, args)
+        exec_error!(RuntimeError::FailedToRun, args)
     };
 
     let reader = BufReader::new(file);
@@ -281,26 +282,24 @@ pub fn run_executable(
     shell: &mut Shell,
     console: &mut Console,
     mut args: Vec<String>,
-) -> Result<(), Box<dyn RushError>> {
+) -> Result<(), RushError> {
     let executable_name = args[0].to_string();
     let Ok(executable_path) = Path::from_str(&executable_name, shell.env().HOME()) else {
         showln!(console, "Failed to resolve executable path: '{}'", executable_name);
-        cmd_error!(RuntimeError::FailedToRun, args)
+        exec_error!(RuntimeError::FailedToRun, args)
     };
 
     // * Executable name is removed before running the executable because the std::process::Command
     // * process builder automatically adds the executable name as the first argument
     args.remove(0);
-    // $ FIX error mapping!!!!!
-    Executable::new(executable_path).run(shell, console, args);
-    Ok(())
+    Executable::new(executable_path).run(shell, console, args)
 }
 
 pub fn configure(
     shell: &mut Shell,
     console: &mut Console,
     args: Vec<String>,
-) -> Result<(), Box<dyn RushError>> {
+) -> Result<(), RushError> {
     check_args!(console, args, 2);
     let key = args[0].clone();
     let value = args[1].clone();
@@ -317,7 +316,7 @@ pub fn configure(
                 return Ok(());
             } else {
                 showln!(console, "Invalid truncation length: '{}'", value);
-                cmd_error!(ArgumentError::InvalidValue(value), args);
+                exec_error!(ArgumentError::InvalidValue(value), args);
             }
         }
         "history-limit" => {
@@ -331,7 +330,7 @@ pub fn configure(
                 return Ok(());
             } else {
                 showln!(console, "Invalid history limit: '{}'", value);
-                cmd_error!(ArgumentError::InvalidValue(value), args);
+                exec_error!(ArgumentError::InvalidValue(value), args);
             }
         }
         "show-errors" => {
@@ -340,12 +339,12 @@ pub fn configure(
                 return Ok(());
             } else {
                 showln!(console, "Invalid value for show-errors: '{}'", value);
-                cmd_error!(ArgumentError::InvalidValue(value), args)
+                exec_error!(ArgumentError::InvalidValue(value), args)
             }
         }
         _ => {
             showln!(console, "Invalid configuration key: '{}'", key);
-            cmd_error!(ArgumentError::InvalidArgument(key), args);
+            exec_error!(ArgumentError::InvalidArgument(key), args);
         }
     }
 }
@@ -354,7 +353,7 @@ pub fn environment_variable(
     shell: &mut Shell,
     console: &mut Console,
     args: Vec<String>,
-) -> Result<(), Box<dyn RushError>> {
+) -> Result<(), RushError> {
     check_args!(console, args, 1);
     match args[0].to_uppercase().as_str() {
         "PATH" => {
@@ -367,7 +366,7 @@ pub fn environment_variable(
         "CWD" | "WORKING-DIRECTORY" => showln!(console, "{}", shell.env().CWD()),
         _ => {
             showln!(console, "Invalid environment variable: '{}'", args[0]);
-            cmd_error!(ArgumentError::InvalidArgument(args[0].clone()), args)
+            exec_error!(ArgumentError::InvalidArgument(args[0].clone()), args)
         }
     }
 
@@ -378,12 +377,12 @@ pub fn edit_path(
     shell: &mut Shell,
     console: &mut Console,
     args: Vec<String>,
-) -> Result<(), Box<dyn RushError>> {
+) -> Result<(), RushError> {
     check_args!(console, args, 2);
     let action = args[0].clone();
     let Ok(path) = Path::from_str(&args[1], shell.env().HOME()) else {
         showln!(console, "Invalid directory: '{}'", &args[1]);
-        cmd_error!(ArgumentError::InvalidArgument(args[1].clone()), args)
+        exec_error!(ArgumentError::InvalidArgument(args[1].clone()), args)
     };
 
     match action.as_str() {
@@ -391,7 +390,7 @@ pub fn edit_path(
         "prepend" => shell.env_mut().PATH_mut().push_back(path),
         _ => {
             showln!(console, "Invalid action: '{}'", action);
-            cmd_error!(ArgumentError::InvalidArgument(action), args)
+            exec_error!(ArgumentError::InvalidArgument(action), args)
         }
     }
 

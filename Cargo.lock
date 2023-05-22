@@ -378,6 +378,7 @@ name = "rush"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "rush-error",
  "rush-eval",
  "rush-state",
 ]

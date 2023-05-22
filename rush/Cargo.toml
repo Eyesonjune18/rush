@@ -8,4 +8,5 @@ edition = "2021"
 [dependencies]
 rush-state = { path = "../rush-state" }
 rush-eval = { path = "../rush-eval" }
+rush-error = { path = "../rush-error" }
 anyhow.workspace = true

@@ -9,12 +9,12 @@ use rush_state::path::Path;
 use rush_state::shell::Shell;
 use rush_state::showln;
 use rush_error::RushError;
-use rush_error::exec_errors::{CommandError, CommandType, FilesystemError, TerminalError, RuntimeError};
+use rush_error::exec_errors::{ExecError, CommandType, FilesystemError, TerminalError, RuntimeError};
 
 // Represents either a builtin (internal command) or an executable (external command)
 // A Runnable may be executed by calling its .run() method
 pub trait Runnable {
-    fn run(&self, shell: &mut Shell, console: &mut Console, arguments: Vec<String>) -> Result<(), Box<dyn RushError>>;
+    fn run(&self, shell: &mut Shell, console: &mut Console, arguments: Vec<String>) -> Result<(), RushError>;
 }
 
 // Wrapper type for Vec<String> that makes it easier to read code related to Builtins
@@ -32,11 +32,11 @@ impl Aliases {
 pub struct Builtin {
     pub true_name: String,
     pub aliases: Aliases,
-    function: Box<dyn Fn(&mut Shell, &mut Console, Vec<String>) -> Result<(), Box<dyn RushError>>>,
+    function: Box<dyn Fn(&mut Shell, &mut Console, Vec<String>) -> Result<(), RushError>>,
 }
 
 impl Builtin {
-    pub fn new<F: Fn(&mut Shell, &mut Console, Vec<String>) -> Result<(), Box<dyn RushError>> + 'static>(
+    pub fn new<F: Fn(&mut Shell, &mut Console, Vec<String>) -> Result<(), RushError> + 'static>(
         true_name: &str,
         aliases: Vec<String>,
         function: F,
@@ -54,7 +54,7 @@ impl Builtin {
 }
 
 impl Runnable for Builtin {
-    fn run(&self, shell: &mut Shell, console: &mut Console, arguments: Vec<String>) -> Result<(), Box<dyn RushError>> {
+    fn run(&self, shell: &mut Shell, console: &mut Console, arguments: Vec<String>) -> Result<(), RushError> {
         (self.function)(shell, console, arguments)
     }
 }
@@ -77,12 +77,12 @@ impl Executable {
 impl Runnable for Executable {
     // * Executables do not have access to the shell state, but the context argument is required by the Runnable trait
     // TODO: Remove as many .unwrap() calls as possible here
-    fn run(&self, _shell: &mut Shell, console: &mut Console, args: Vec<String>) -> Result<(), Box<dyn RushError>> {
+    fn run(&self, _shell: &mut Shell, console: &mut Console, args: Vec<String>) -> Result<(), RushError> {
         let exe_name = self.path.to_string();
         // Convenience macro for creating and returning a CommandError
         macro_rules! exe_error {
             ($kind:expr, $name:expr, $args:expr) => {
-                return Err(Box::new(CommandError::new($kind, CommandType::Executable, $name, $args)))
+                return Err(RushError::from(ExecError::new($kind, CommandType::Executable, $name, $args)))
             }
         }
 
@@ -97,8 +97,8 @@ impl Runnable for Executable {
         };
 
         // Create channels for communication between threads
-        let (tx_stdout, rx_stdout) = mpsc::channel::<Result<String, Box<dyn RushError>>>();
-        let (tx_stderr, rx_stderr) = mpsc::channel::<Result<String, Box<dyn RushError>>>();
+        let (tx_stdout, rx_stdout) = mpsc::channel::<Result<String, RushError>>();
+        let (tx_stderr, rx_stderr) = mpsc::channel::<Result<String, RushError>>();
 
         // Spawn a thread to read stdout
         let stdout_thread = {

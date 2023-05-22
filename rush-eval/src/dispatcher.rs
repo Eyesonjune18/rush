@@ -1,5 +1,5 @@
-use anyhow::Result;
 use std::os::unix::prelude::PermissionsExt;
+
 extern crate clap;
 
 use rush_exec::builtins;
@@ -8,9 +8,17 @@ use rush_state::console::Console;
 use rush_state::path::Path;
 use rush_state::shell::Shell;
 use rush_error::RushError;
+use rush_error::eval_errors::{EvalError, DispatchError};
 
-use crate::errors::DispatchError;
 use crate::parser;
+
+// Convenience macro for creating and returning an EvalError
+// ? Should this just expand to the error value so it can be returned explicitly?
+macro_rules! eval_error {
+    ($kind:expr, $name:expr, $args:expr) => {
+        return Err(RushError::from(EvalError::new($kind, $name, $args.clone())))
+    }
+}
 
 // Represents a collection of builtin commands
 // Allows for command resolution and execution through aliases
@@ -53,7 +61,7 @@ impl Dispatcher {
     }
 
     // Adds a builtin to the Dispatcher
-    fn add_builtin<F: Fn(&mut Shell, &mut Console, Vec<String>) -> Result<(), Box<dyn RushError>> + 'static, const N: usize>(
+    fn add_builtin<F: Fn(&mut Shell, &mut Console, Vec<String>) -> Result<(), RushError> + 'static, const N: usize>(
         &mut self,
         true_name: &str,
         aliases: [&str; N],
@@ -81,9 +89,9 @@ impl Dispatcher {
     }
 
     // Evaluates and executes a command from a string
-    pub fn eval(&self, shell: &mut Shell, console: &mut Console, line: &String) -> Result<()> {
+    pub fn eval(&self, shell: &mut Shell, console: &mut Console, line: &String) -> Result<(), RushError> {
         let commands = parser::parse(line);
-        let mut results: Vec<Result<()>> = Vec::new();
+        let mut results: Vec<Result<(), RushError>> = Vec::new();
 
         for (command_name, command_args) in commands {
             // Dispatch the command to the Dispatcher
@@ -108,12 +116,10 @@ impl Dispatcher {
         console: &mut Console,
         command_name: &str,
         command_args: Vec<String>,
-    ) -> Result<()> {
+    ) -> Result<(), RushError> {
         // If the command resides in the Dispatcher (generally means it is a builtin) run it
         if let Some(command) = self.resolve(command_name) {
-            // $ FIX!
-            command.run(shell, console, command_args);
-            Ok(())
+            command.run(shell, console, command_args)
         } else {
             // If the command is not in the Dispatcher, try to run it as an executable from the PATH
             let path = Path::from_path_var(command_name, shell.env().PATH());
@@ -123,18 +129,16 @@ impl Dispatcher {
                     let permission_code = metadata.permissions().mode();
                     // 0o111 is the octal representation of 73, which is the executable bit
                     if permission_code & 0o111 == 0 {
-                        Err(DispatchError::CommandNotExecutable(permission_code).into())
+                        eval_error!(DispatchError::NotAnExecutable(permission_code), command_name, command_args)
                     } else {
-                        // $ FIX!
-                        Executable::new(path).run(shell, console, command_args);
-                        Ok(())
+                        Executable::new(path).run(shell, console, command_args)
                     }
                 } else {
                     // If the file cannot be read, return an error
-                    Err(DispatchError::FailedToReadExecutableMetadata(path.to_string()).into())
+                    eval_error!(DispatchError::FailedToReadMetadata(path.to_string()), command_name, command_args)
                 }
             } else {
-                Err(DispatchError::UnknownCommand(command_name.to_string()).into())
+                eval_error!(DispatchError::UnknownCommand(command_name.to_string()), command_name, command_args)
             }
         }
     }

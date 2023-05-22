@@ -1,10 +1,12 @@
 use anyhow::Result;
 
 use rush_eval::dispatcher::Dispatcher;
-use rush_eval::errors::DispatchError;
 use rush_state::console::{restore_terminal, Console};
 use rush_state::shell::Shell;
 use rush_state::showln;
+use rush_error::RushError;
+use rush_error::eval_errors::{EvalError, EvalErrorCategory, DispatchError};
+use rush_error::exec_errors::ExecError;
 
 fn main() -> Result<()> {
     // The Shell type stores all of the state for the shell, including its configuration,
@@ -34,23 +36,16 @@ fn main() -> Result<()> {
 }
 
 // Prints an appropriate error message for the given error, if applicable
-fn handle_error(error: Result<()>, shell: &mut Shell, console: &mut Console) {
-    match error {
-        Ok(_) => shell.set_success(true),
-        Err(e) => {
-            match e.downcast_ref::<DispatchError>() {
-                Some(DispatchError::UnknownCommand(command_name)) => {
-                    showln!(console, "Unknown command: {}", command_name);
-                }
-                _ => {
-                    if shell.config().show_errors {
-                        // TODO: This is sort of a "magic" formatting string, it should be changed to a method or something
-                        showln!(console, "Error: {:#?}: {}", e, e);
-                    }
-                }
-            }
-
-            shell.set_success(false);
+fn handle_error(error: Result<(), RushError>, shell: &mut Shell, console: &mut Console) {
+    if let Err(e) = error {
+        if let Some(command_name) = e.command_name_if_unknown() {
+            showln!(console, "Unknown command: {}", command_name);
         }
+
+        if shell.config().show_errors {
+            showln!(console, "{}", e);
+        }
+    } else {
+        shell.set_success(true);
     }
 }

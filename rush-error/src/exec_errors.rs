@@ -1,41 +1,36 @@
 use std::fmt::Display;
 use std::path::PathBuf;
 
-use crate::RushError;
+use crate::error_fmt;
 
-pub trait CommandErrorKind: Into<CommandErrorCategory> {}
+pub trait ExecErrorKind: Into<ExecErrorCategory> {}
 
 #[derive(Debug)]
-pub struct CommandError {
-    kind: CommandErrorCategory,
-    context: CommandErrorContext,
+pub struct ExecError {
+    kind: ExecErrorCategory,
+    context: ExecErrorContext,
 }
 
-impl Display for CommandError {
+impl Display for ExecError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let kind_str = format!("[ERROR]:\n{:4}", self.kind);
-        let context_str = format!("[CONTEXT]:\n{:4}", self.context);
-        write!(f, "{}\n{}", kind_str, context_str)
+        error_fmt(f, &self.kind, &self.context)
     }
 }
 
 #[derive(Debug)]
-struct CommandErrorContext {
+struct ExecErrorContext {
     command_type: CommandType,
     command_name: String,
     command_args: Vec<String>,
 }
 
-impl Display for CommandErrorContext {
+impl Display for ExecErrorContext {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let type_str = format!("[TYPE]: {}", self.command_type);
-        let name_str = format!("[COMMAND]: {}", self.command_name);
-        let args_str = format!("[ARGUMENTS]: {}", self.command_args.join(" "));
-        write!(f, "{}\n{}\n{}", name_str, args_str, type_str)
+        writeln!(f, "[TYPE]: {}", self.command_type)?;
+        writeln!(f, "[COMMAND]: {}", self.command_name)?;
+        writeln!(f, "[ARGUMENTS]: {}", self.command_args.join(", "))
     }
 }
-
-impl RushError for CommandError {}
 
 #[derive(Debug)]
 pub enum CommandType {
@@ -58,21 +53,21 @@ impl Display for CommandType {
 }
 
 #[derive(Debug)]
-pub enum CommandErrorCategory {
+pub enum ExecErrorCategory {
     Argument(ArgumentError),
     Runtime(RuntimeError),
     Filesystem(FilesystemError),
     Terminal(TerminalError),
 }
 
-impl Display for CommandErrorCategory {
+impl Display for ExecErrorCategory {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        use CommandErrorCategory::*;
+        use ExecErrorCategory::*;
         let category_str = format!("[CATEGORY]: {}", match self {
-            Argument(_) => format!("Argument"),
-            Runtime(_) => format!("Runtime"),
-            Filesystem(_) => format!("Filesystem"),
-            Terminal(_) => format!("Terminal"),
+            Argument(_) => "Argument",
+            Runtime(_) => "Runtime",
+            Filesystem(_) => "Filesystem",
+            Terminal(_) => "Terminal",
         });
 
         let message_str = format!("[MESSAGE]: {}", match self {
@@ -86,27 +81,27 @@ impl Display for CommandErrorCategory {
     }
 }
 
-impl From<ArgumentError> for CommandErrorCategory {
+impl From<ArgumentError> for ExecErrorCategory {
     fn from(e: ArgumentError) -> Self {
-        CommandErrorCategory::Argument(e)
+        ExecErrorCategory::Argument(e)
     }
 }
 
-impl From<TerminalError> for CommandErrorCategory {
+impl From<TerminalError> for ExecErrorCategory {
     fn from(e: TerminalError) -> Self {
-        CommandErrorCategory::Terminal(e)
+        ExecErrorCategory::Terminal(e)
     }
 }
 
-impl From<FilesystemError> for CommandErrorCategory {
+impl From<FilesystemError> for ExecErrorCategory {
     fn from(e: FilesystemError) -> Self {
-        CommandErrorCategory::Filesystem(e)
+        ExecErrorCategory::Filesystem(e)
     }
 }
 
-impl From<RuntimeError> for CommandErrorCategory {
+impl From<RuntimeError> for ExecErrorCategory {
     fn from(e: RuntimeError) -> Self {
-        CommandErrorCategory::Runtime(e)
+        ExecErrorCategory::Runtime(e)
     }
 }
 
@@ -117,18 +112,18 @@ pub enum ArgumentError {
     InvalidValue(String),
 }
 
-impl CommandErrorKind for ArgumentError {}
+impl ExecErrorKind for ArgumentError {}
 
 impl Display for ArgumentError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use ArgumentError::*;
-        write!(f, "{}", match self {
+        match self {
             InvalidArgumentCount(expected, actual) => {
-                format!("Expected {} arguments, got {}", expected, actual)
+                write!(f, "Expected {} arguments, got {}", expected, actual)
             }
-            InvalidArgument(arg) => format!("Invalid argument: {}", arg),
-            InvalidValue(value) => format!("Invalid value: {}", value),
-        })
+            InvalidArgument(arg) => write!(f, "Invalid argument: {}", arg),
+            InvalidValue(value) => write!(f, "Invalid value: {}", value),
+        }
     }
 }
 
@@ -138,7 +133,7 @@ pub enum TerminalError {
     FailedToParseStderr(String),
 }
 
-impl CommandErrorKind for TerminalError {}
+impl ExecErrorKind for TerminalError {}
 
 impl Display for TerminalError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -158,7 +153,7 @@ pub enum FilesystemError {
     PathNoLongerExists(PathBuf),
 }
 
-impl CommandErrorKind for FilesystemError {}
+impl ExecErrorKind for FilesystemError {}
 
 impl Display for FilesystemError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -189,7 +184,7 @@ pub enum RuntimeError {
     FailedToRun,
 }
 
-impl CommandErrorKind for RuntimeError {}
+impl ExecErrorKind for RuntimeError {}
 
 impl Display for RuntimeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -201,11 +196,11 @@ impl Display for RuntimeError {
     }
 }
 
-impl CommandError {
-    pub fn new(kind: impl CommandErrorKind, command_type: CommandType, command_name: &str, command_args: Vec<String>) -> Self {
-        CommandError {
+impl ExecError {
+    pub fn new(kind: impl ExecErrorKind, command_type: CommandType, command_name: &str, command_args: Vec<String>) -> Self {
+        ExecError {
             kind: kind.into(),
-            context: CommandErrorContext {
+            context: ExecErrorContext {
                 command_type,
                 command_name: command_name.to_owned(),
                 command_args,
