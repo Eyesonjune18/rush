@@ -11,7 +11,7 @@ members = [
 thiserror = "1.0.40"
 anyhow = "1.0.70"
 crossterm = "0.26.1"
-ratatui = "0.20.1"
+ratatui = { git = "https://github.com/Eyesonjune18/ratatui.git" }
 ansi-to-tui = "3.0.0"
 fs-err = "2.9.0"
 bitflags = "2.1.0"

@@ -5,8 +5,6 @@ use rush_state::console::{restore_terminal, Console};
 use rush_state::shell::Shell;
 use rush_state::showln;
 use rush_error::RushError;
-use rush_error::eval_errors::{EvalError, EvalErrorCategory, DispatchError};
-use rush_error::exec_errors::ExecError;
 
 fn main() -> Result<()> {
     // The Shell type stores all of the state for the shell, including its configuration,

@@ -13,7 +13,7 @@ use crossterm::terminal::{
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::{Span, Spans, Text};
+use ratatui::text::{Span, Line, Text};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
 
@@ -83,8 +83,8 @@ pub struct Console<'a> {
 // Represents all data stored in the TUI console, excluding the Terminal
 // * This is done because most methods do not need to access the Console.terminal and it can cause issues with borrowing
 struct ConsoleData<'a> {
-    // ? Should this be an Option<Spans>?
-    prompt: Spans<'a>,
+    // ? Should this be an Option<Line>?
+    prompt: Line<'a>,
     // ? What is the actual name of this?
     prompt_tick: Span<'a>,
     // An index to the Span of the tick next to the most recently executed command
@@ -194,7 +194,7 @@ impl<'a> Console<'a> {
                     // Save the line buffer as part of the output buffer, along with a tick which will be colored grey at first
                     // while the command is executing, and then green or red depending on the eventual success or failure of the command
                     self.data.success_tick_index = Some(self.data.output_buffer.lines.len());
-                    let mut line_spans = Spans::from(vec![
+                    let mut input_line = Line::from(vec![
                         Span::styled(
                             "❯ ",
                             Style::default()
@@ -204,14 +204,8 @@ impl<'a> Console<'a> {
                         Span::styled(line.clone(), Style::default().fg(Color::LightYellow)),
                     ]);
 
-                    // TODO: Change this to line_spans.patch_style() once the ratatui PR is merged
-                    for span in &mut line_spans.0 {
-                        span.style = span
-                            .style
-                            .patch(Style::default().add_modifier(Modifier::ITALIC));
-                    }
-
-                    self.data.append_spans_newline(line_spans);
+                    input_line.patch_style(Style::default().add_modifier(Modifier::ITALIC));
+                    self.data.append_line_with_newline(input_line);
 
                     // Draw the frame with the new output
                     self.data.update_debug(shell);
@@ -312,13 +306,13 @@ impl<'a> Console<'a> {
     // TODO: Probably make this a macro in the future, but for now just make it use &str or String
     // TODO: Make lazy execution version of this, or a lazy execution mode
     pub fn println(&mut self, text: &str) {
-        self.data.append_str_newline(text);
+        self.data.append_str_with_newline(text);
         _ = self.draw_frame(true)
     }
 
     // Prints a line of text to the console without a newline
     pub fn print(&mut self, text: &str) {
-        self.data.append_str(text);
+        self.data.append_str_without_newline(text);
         _ = self.draw_frame(true)
     }
 }
@@ -332,7 +326,7 @@ impl Drop for Console<'_> {
 impl<'a> ConsoleData<'a> {
     fn new() -> Self {
         Self {
-            prompt: Spans::default(),
+            prompt: Line::default(),
             prompt_tick: Span::styled(
                 "❯ ",
                 Style::default()
@@ -355,11 +349,11 @@ impl<'a> ConsoleData<'a> {
     // Recolors the command output tick based on the command's exit status
     fn update_output_tick(&mut self, shell: &Shell) {
         // Get the tick from the output buffer
-        // If the tick exists, it will be the first Span in the indexed Spans
+        // If the tick exists, it will be the first Span in the indexed Line
         let tick = {
             if let Some(index) = self.success_tick_index {
                 if let Some(line) = self.output_buffer.lines.get_mut(index) {
-                    line.0.first_mut()
+                    line.spans.first_mut()
                 } else {
                     return;
                 }
@@ -404,7 +398,7 @@ impl<'a> ConsoleData<'a> {
         span_list.push(Span::from(" on "));
         span_list.push(cwd);
 
-        self.prompt = Spans::from(span_list);
+        self.prompt = Line::from(span_list);
 
         // Color the prompt tick based on the last shell command's exit status
         match shell.success() {
@@ -435,29 +429,29 @@ impl<'a> ConsoleData<'a> {
         let key_style = Style::default().add_modifier(Modifier::BOLD);
         let value_style = Style::default().fg(Color::LightGreen);
 
-        let get_spans = |key, value: &dyn Debug| {
-            Spans::from(vec![
+        let get_line = |key, value: &dyn Debug| {
+            Line::from(vec![
                 Span::styled(key, key_style),
                 Span::styled(format!(" {:?}", value), value_style),
             ])
         };
 
-        let line_buffer = get_spans("LINE BUFFER:", &self.line_buffer);
-        let cursor_index = get_spans("CURSOR INDEX:", &self.cursor_index);
-        let autocomplete_buffer = get_spans("AUTOCOMPLETE BUFFER:", &self.autocomplete_buffer);
-        let history_buffer = get_spans("HISTORY BUFFER:", &self.history_buffer);
-        let history_index = get_spans("HISTORY INDEX:", &self.history_index);
+        let line_buffer = get_line("LINE BUFFER:", &self.line_buffer);
+        let cursor_index = get_line("CURSOR INDEX:", &self.cursor_index);
+        let autocomplete_buffer = get_line("AUTOCOMPLETE BUFFER:", &self.autocomplete_buffer);
+        let history_buffer = get_line("HISTORY BUFFER:", &self.history_buffer);
+        let history_index = get_line("HISTORY INDEX:", &self.history_index);
         let output_buffer_length =
-            get_spans("OUTPUT BUFFER LENGTH:", &self.output_buffer.lines.len());
-        let scroll = get_spans("SCROLL:", &self.scroll);
+            get_line("OUTPUT BUFFER LENGTH:", &self.output_buffer.lines.len());
+        let scroll = get_line("SCROLL:", &self.scroll);
 
-        let truncation = get_spans("PROMPT TRUNCATION:", &shell.config().truncation_factor);
-        let history_limit = get_spans("HISTORY LIMIT:", &shell.config().history_limit);
-        let show_errors = get_spans("SHOW ERRORS:", &shell.config().show_errors);
+        let truncation = get_line("PROMPT TRUNCATION:", &shell.config().truncation_factor);
+        let history_limit = get_line("HISTORY LIMIT:", &shell.config().history_limit);
+        let show_errors = get_line("SHOW ERRORS:", &shell.config().show_errors);
 
-        let user = get_spans("USER:", &shell.env().USER());
-        let home = get_spans("HOME:", &shell.env().HOME());
-        let cwd = get_spans("CWD:", &shell.env().CWD());
+        let user = get_line("USER:", &shell.env().USER());
+        let home = get_line("HOME:", &shell.env().HOME());
+        let cwd = get_line("CWD:", &shell.env().CWD());
 
         self.debug_buffer = Text::from(vec![
             line_buffer,
@@ -467,11 +461,11 @@ impl<'a> ConsoleData<'a> {
             history_index,
             output_buffer_length,
             scroll,
-            Spans::default(),
+            Line::default(),
             truncation,
             history_limit,
             show_errors,
-            Spans::default(),
+            Line::default(),
             user,
             home,
             cwd,
@@ -512,12 +506,12 @@ impl<'a> ConsoleData<'a> {
                 ))
         };
 
-        let mut line = Spans::from(vec![
+        let mut line = Line::from(vec![
             self.prompt_tick.clone(),
             Span::from(self.line_buffer.clone()),
         ]);
         if let Some(autocomplete) = &self.autocomplete_buffer {
-            line.0.push(Span::styled(
+            line.spans.push(Span::styled(
                 autocomplete.clone(),
                 Style::default().add_modifier(Modifier::ITALIC | Modifier::DIM),
             ));
@@ -777,56 +771,56 @@ impl<'a> ConsoleData<'a> {
         self.cursor_index = 0;
     }
 
-    // Appends a string to the output buffer, splitting it into Spans by newline characters so it is rendered properly
-    fn append_str(&mut self, string: &str) {
+    // Appends a string to the output buffer, splitting it into Line by newline characters so it is rendered properly
+    fn append_str_without_newline(&mut self, string: &str) {
         // Return early on an empty string to allow for safely unwrapping the first line
         if string.is_empty() {
             return;
         }
 
         // This code is awful so I will try to give my best description of it
-        // First, we have to split the string into lines and convert them into Spans, because the Text type
-        // does not render newline characters; instead, it requires that every line must be a separate Spans
-        let mut spans = string.split('\n').map(str::to_owned).map(Spans::from);
+        // First, we have to split the string into lines and convert them into Line, because the Text type
+        // does not render newline characters; instead, it requires that every line must be a separate Line
+        let mut line = string.split('\n').map(str::to_owned).map(Line::from);
         // To avoid automatically creating a new line before the text is printed (which would effectively forbid print!()-type behavior),
-        // we have to append directly to the last Spans in the output buffer
-        // So this line basically grabs the Vec<Span> from the first Spans (first line)
-        let first_spans = spans.next().unwrap().0;
+        // we have to append directly to the last Line in the output buffer
+        // So this line basically grabs the Vec<Span> from the first Line
+        let first_line = line.next().unwrap().spans;
 
         // If the output buffer has any lines, we append the first line of the new text to the last line of the output buffer
-        // Otherwise, we just push the first line of the new text to the output buffer in the form of a Spans,
+        // Otherwise, we just push the first line of the new text to the output buffer in the form of a Line,
         // so the first line of the new text isn't just skipped on an empty output buffer
         if let Some(last_line) = self.output_buffer.lines.last_mut() {
-            last_line.0.extend(first_spans);
+            last_line.spans.extend(first_line);
         } else {
-            self.output_buffer.lines.push(Spans::from(first_spans));
+            self.output_buffer.lines.push(Line::from(first_line));
         }
 
-        // The rest of the lines (Spans) can then be appended to the output buffer as normal
-        self.output_buffer.extend(spans)
+        // The rest of the lines can then be appended to the output buffer as normal
+        self.output_buffer.extend(line)
     }
 
     // Appends a string to the next line of the output buffer
-    fn append_str_newline(&mut self, string: &str) {
-        self.append_str(string);
+    fn append_str_with_newline(&mut self, string: &str) {
+        self.append_str_without_newline(string);
         self.append_newline()
     }
 
-    // Appends a Spans to the output buffer
+    // Appends a Line to the output buffer
     #[allow(dead_code)]
-    fn append_spans(&mut self, spans: Spans<'a>) {
-        self.output_buffer.lines.extend([spans]);
+    fn append_line_without_newline(&mut self, line: Line<'a>) {
+        self.output_buffer.lines.extend([line]);
     }
 
-    // Appends a Spans to the output buffer, adding a newline after it
-    fn append_spans_newline(&mut self, spans: Spans<'a>) {
+    // Appends a Line to the output buffer, adding a newline after it
+    fn append_line_with_newline(&mut self, line: Line<'a>) {
         // TODO: Come up with a better name for this or merge it with append_newline() somehow
-        self.output_buffer.lines.extend([spans, Spans::default()]);
+        self.output_buffer.lines.extend([line, Line::default()]);
     }
 
     // Appends a newline to the output buffer
     fn append_newline(&mut self) {
-        self.output_buffer.lines.push(Spans::default());
+        self.output_buffer.lines.push(Line::default());
     }
 
     // Ensures that there is an empty line at the end of the output buffer
@@ -834,8 +828,8 @@ impl<'a> ConsoleData<'a> {
     fn enforce_spacing(&mut self) {
         if let Some(last_line) = self.output_buffer.lines.last_mut() {
             // TODO: Find a less ugly way to do this
-            if !last_line.0.is_empty() && last_line.0.last() != Some(&Span::raw("")) {
-                self.output_buffer.lines.push(Spans::default());
+            if !last_line.spans.is_empty() && last_line.spans.last() != Some(&Span::raw("")) {
+                self.output_buffer.lines.push(Line::default());
             }
         }
     }
