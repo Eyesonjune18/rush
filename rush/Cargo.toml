@@ -9,3 +9,5 @@ edition = "2021"
 rush-state = { path = "../rush-state" }
 rush-eval = { path = "../rush-eval" }
 anyhow.workspace = true
+rush-plugins = { path = "../rush-plugins" }
+is_executable = "1.0.1"

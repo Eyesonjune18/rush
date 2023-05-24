@@ -1,9 +1,9 @@
-use fs_err::canonicalize;
 use std::collections::VecDeque;
 use std::fmt::{Display, Formatter};
 use std::path::PathBuf;
 
 use anyhow::Result;
+use fs_err::canonicalize;
 
 use crate::errors::PathError;
 

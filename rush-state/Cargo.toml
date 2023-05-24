@@ -13,3 +13,4 @@ ratatui.workspace = true
 ansi-to-tui.workspace = true
 fs-err.workspace = true
 bitflags.workspace = true
+rush-plugins = { path = "../rush-plugins" }

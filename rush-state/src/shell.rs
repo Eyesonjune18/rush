@@ -1,4 +1,5 @@
 use anyhow::Result;
+use rush_plugins::PluginHost;
 
 use crate::config::Configuration;
 use crate::environment::Environment;
@@ -11,10 +12,11 @@ pub struct Shell {
     pub(crate) config: Configuration,
     pub(crate) command_success: bool,
     pub(crate) command_history: Vec<String>,
+    pub plugins: PluginHost,
 }
 
 impl Shell {
-    pub fn new() -> Result<Self> {
+    pub fn new(plugins: PluginHost) -> Result<Self> {
         let config =
             Configuration::from_file("config/config.rush").unwrap_or(Configuration::default());
 
@@ -23,6 +25,7 @@ impl Shell {
             config,
             command_success: true,
             command_history: Vec::new(),
+            plugins,
         })
     }
 

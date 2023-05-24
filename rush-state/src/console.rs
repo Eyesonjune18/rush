@@ -1,15 +1,16 @@
 use std::fmt::Debug;
 use std::io::{stdout, Stdout};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, RwLock};
+use std::thread;
 
 use anyhow::Result;
 use bitflags::bitflags;
-use crossterm::cursor;
 use crossterm::event::{self, DisableMouseCapture, Event, KeyCode, KeyModifiers};
-use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen,
 };
+use crossterm::{cursor, execute};
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -109,7 +110,7 @@ struct ConsoleData<'a> {
     // The index of the cursor in the line buffer
     cursor_index: usize,
     // If the line buffer can autocomplete to a command from the history, this stores the characters that will be added if the user presses TAB
-    autocomplete_buffer: Option<String>,
+    autocomplete_buffer: Arc<RwLock<Option<String>>>,
     // Information to be stored while the user is looking through history
     history: Option<History>,
     // The number of lines that have been scrolled down in the output panel
@@ -133,6 +134,79 @@ pub fn restore_terminal() {
     )
     .unwrap();
     RAW_MODE.store(false, Ordering::Release);
+}
+
+impl Console<'static> {
+    // Reads a line of input from the user
+    // Handles all TUI interaction between the user and the prompt
+    pub fn read_line(console_ref: &Arc<RwLock<Self>>, shell: &mut Shell) -> Result<String> {
+        {
+            let mut console = console_ref.write().unwrap();
+            console.data.update_output_tick(shell);
+            console.data.update_prompt(shell);
+            console.data.update_debug(shell);
+            console.draw_frame(true)?;
+        }
+
+        loop {
+            // Console is unlocked while blocking here to allow the autocomplete to update.
+            let event = event::read()?;
+            let mut console = console_ref.write().unwrap();
+            let action = console.handle_event(event, shell)?;
+
+            match action {
+                ReplAction::Return => {
+                    // Make sure that there is an extra line of space between the last line of output and the command output
+                    console.data.enforce_spacing();
+
+                    // Save the line buffer for returning and reset it to make way for the next Console.read_line() call
+                    let line = console.data.line_buffer.clone();
+                    console.data.reset_line_buffer();
+
+                    // Clear the history buffer and index
+                    console.data.history = None;
+
+                    // Clear the autocomplete buffer
+                    *console.data.autocomplete_buffer.write().unwrap() = None;
+
+                    // Save the line buffer as part of the output buffer, along with a tick which will be colored grey at first
+                    // while the command is executing, and then green or red depending on the eventual success or failure of the command
+                    console.data.success_tick_index = Some(console.data.output_buffer.lines.len());
+                    let mut line_spans = Spans::from(vec![
+                        Span::styled(
+                            "❯ ",
+                            Style::default()
+                                .fg(Color::DarkGray)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(line.clone(), Style::default().fg(Color::LightYellow)),
+                    ]);
+
+                    // TODO: Change this to line_spans.patch_style() once the ratatui PR is merged
+                    for span in &mut line_spans.0 {
+                        span.style = span
+                            .style
+                            .patch(Style::default().add_modifier(Modifier::ITALIC));
+                    }
+
+                    console.data.append_spans_newline(line_spans);
+
+                    // Draw the frame with the new output
+                    console.data.update_debug(shell);
+                    console.draw_frame(true)?;
+
+                    return Ok(line);
+                }
+                ReplAction::Exit => console.exit(0),
+                ReplAction::RedrawFrame => {
+                    console.data.update_autocomplete(shell, console_ref.clone());
+                    console.data.update_debug(shell);
+                    console.draw_frame(false)?;
+                }
+                ReplAction::Ignore => (),
+            }
+        }
+    }
 }
 
 impl<'a> Console<'a> {
@@ -168,72 +242,6 @@ impl<'a> Console<'a> {
         restore_terminal();
         // TODO: Exiting ignores drops, which may be problematic
         std::process::exit(code);
-    }
-
-    // Reads a line of input from the user
-    // Handles all TUI interaction between the user and the prompt
-    pub fn read_line(&mut self, shell: &Shell) -> Result<String> {
-        self.data.update_output_tick(shell);
-        self.data.update_prompt(shell);
-        self.data.update_debug(shell);
-        self.draw_frame(true)?;
-
-        loop {
-            let event = event::read()?;
-            let action = self.handle_event(event, shell)?;
-
-            match action {
-                ReplAction::Return => {
-                    // Make sure that there is an extra line of space between the last line of output and the command output
-                    self.data.enforce_spacing();
-
-                    // Save the line buffer for returning and reset it to make way for the next Console.read_line() call
-                    let line = self.data.line_buffer.clone();
-                    self.data.reset_line_buffer();
-
-                    // Clear the history buffer and index
-                    self.data.history = None;
-
-                    // Clear the autocomplete buffer
-                    self.data.autocomplete_buffer = None;
-
-                    // Save the line buffer as part of the output buffer, along with a tick which will be colored grey at first
-                    // while the command is executing, and then green or red depending on the eventual success or failure of the command
-                    self.data.success_tick_index = Some(self.data.output_buffer.lines.len());
-                    let mut line_spans = Spans::from(vec![
-                        Span::styled(
-                            "❯ ",
-                            Style::default()
-                                .fg(Color::DarkGray)
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                        Span::styled(line.clone(), Style::default().fg(Color::LightYellow)),
-                    ]);
-
-                    // TODO: Change this to line_spans.patch_style() once the ratatui PR is merged
-                    for span in &mut line_spans.0 {
-                        span.style = span
-                            .style
-                            .patch(Style::default().add_modifier(Modifier::ITALIC));
-                    }
-
-                    self.data.append_spans_newline(line_spans);
-
-                    // Draw the frame with the new output
-                    self.data.update_debug(shell);
-                    self.draw_frame(true)?;
-
-                    return Ok(line);
-                }
-                ReplAction::Exit => self.exit(0),
-                ReplAction::RedrawFrame => {
-                    self.data.update_autocomplete(shell);
-                    self.data.update_debug(shell);
-                    self.draw_frame(false)?;
-                }
-                ReplAction::Ignore => (),
-            }
-        }
     }
 
     // Handles a key event by queueing appropriate commands based on the given keypress
@@ -280,6 +288,26 @@ impl<'a> Console<'a> {
             // $ This seems like a crappy solution to prevent the Resize event from being ignored
             Event::Resize(_, _) => (),
             _ => return Ok(ReplAction::Ignore),
+        }
+
+        // ensure the user appears to be typing out the autocompletion
+        let mut autocomplete_buffer = self.data.autocomplete_buffer.write().unwrap();
+        if autocomplete_buffer
+            .as_ref()
+            .and_then(|buffer| buffer.chars().next())
+            == self.data.line_buffer.chars().last()
+        {
+            // quick-update the autocomplete:
+            // getting a real autocompletion might be expensive as it relies on plugins to do calculations
+            // instead, we can just guess that it will be the same and allow it to update later
+            if let Some(ref mut buffer) = *autocomplete_buffer {
+                if !buffer.is_empty() {
+                    buffer.remove(0);
+                }
+            }
+        } else {
+            // user is not typing out our suggestion, clear it and update it later
+            *autocomplete_buffer = None;
         }
 
         Ok(ReplAction::RedrawFrame)
@@ -350,7 +378,7 @@ impl<'a> ConsoleData<'a> {
             output_buffer: Text::default(),
             debug_buffer: Text::default(),
             cursor_index: 0,
-            autocomplete_buffer: None,
+            autocomplete_buffer: Arc::new(RwLock::new(None)),
             history: None,
             scroll: 0,
             debug_mode: false,
@@ -449,7 +477,10 @@ impl<'a> ConsoleData<'a> {
 
         let line_buffer = get_spans("LINE BUFFER:", &self.line_buffer);
         let cursor_index = get_spans("CURSOR INDEX:", &self.cursor_index);
-        let autocomplete_buffer = get_spans("AUTOCOMPLETE BUFFER:", &self.autocomplete_buffer);
+        let autocomplete_buffer = get_spans(
+            "AUTOCOMPLETE BUFFER:",
+            &self.autocomplete_buffer.read().unwrap(),
+        );
         let history = get_spans("HISTORY:", &self.history);
         let output_buffer_length =
             get_spans("OUTPUT BUFFER LENGTH:", &self.output_buffer.lines.len());
@@ -462,6 +493,8 @@ impl<'a> ConsoleData<'a> {
         let user = get_spans("USER:", &shell.env().USER());
         let home = get_spans("HOME:", &shell.env().HOME());
         let cwd = get_spans("CWD:", &shell.env().CWD());
+
+        let config = get_spans("CWD:", &format!("{:?}", shell.config()));
 
         self.debug_buffer = Text::from(vec![
             line_buffer,
@@ -478,24 +511,47 @@ impl<'a> ConsoleData<'a> {
             user,
             home,
             cwd,
+            Spans::default(),
+            config,
         ])
     }
 
-    // Updates the autocomplete buffer based on the current line buffer and the command history
-    fn update_autocomplete(&mut self, shell: &Shell) {
-        // If the current line buffer matches any of the commands in the history, put the rest of the command in the autocomplete buffer
-        // Otherwise, clear the autocomplete buffer
-        if !self.line_buffer.is_empty() {
-            for command in &shell.command_history {
-                if command.starts_with(&self.line_buffer) && command != &self.line_buffer {
-                    let rest_of_command = command.strip_prefix(&self.line_buffer).unwrap();
-                    self.autocomplete_buffer = Some(rest_of_command.to_string());
+    // Updates the autocomplete buffer to provide a suggestion for the current line buffer
+    fn update_autocomplete(&mut self, shell: &Shell, console: Arc<RwLock<Console<'static>>>) {
+        let autocomplete_buffer = self.autocomplete_buffer.clone();
+        let mut plugins = shell.plugins.clone();
+        let command_history = shell.command_history.clone();
+        let line_buffer = self.line_buffer.clone();
+
+        // spawn a thread to handle intensive actions like calling plugins, etc
+        thread::spawn(move || {
+            if !line_buffer.is_empty() {
+                // ask plugins for completion
+                if let Some(completion) = plugins
+                    .request_autocomplete(line_buffer.clone())
+                    .into_iter()
+                    .next()
+                {
+                    *autocomplete_buffer.write().unwrap() = Some(completion);
+                    console.write().unwrap().draw_frame(false).unwrap();
                     return;
                 }
-            }
-        }
 
-        self.autocomplete_buffer = None;
+                // If the current line buffer matches any of the commands in the history, put the rest of the command in the autocomplete buffer
+                // Otherwise, clear the autocomplete buffer
+                for command in command_history {
+                    if command.starts_with(&line_buffer) && command != line_buffer {
+                        let rest_of_command = command.strip_prefix(&line_buffer).unwrap();
+                        *autocomplete_buffer.write().unwrap() = Some(rest_of_command.to_string());
+                        console.write().unwrap().draw_frame(false).unwrap();
+                        return;
+                    }
+                }
+            }
+
+            *autocomplete_buffer.write().unwrap() = None;
+            console.write().unwrap().draw_frame(false).unwrap();
+        });
     }
 
     // Generates a TUI frame based on the prompt/line buffer and output buffer
@@ -519,7 +575,7 @@ impl<'a> ConsoleData<'a> {
             self.prompt_tick.clone(),
             Span::from(self.line_buffer.clone()),
         ]);
-        if let Some(autocomplete) = &self.autocomplete_buffer {
+        if let Some(ref autocomplete) = *self.autocomplete_buffer.read().unwrap() {
             line.0.push(Span::styled(
                 autocomplete.clone(),
                 Style::default().add_modifier(Modifier::ITALIC | Modifier::DIM),
@@ -846,10 +902,11 @@ impl<'a> ConsoleData<'a> {
 
     // Autocompletes the line buffer
     fn autocomplete_line(&mut self) {
-        if let Some(autocompletion) = &self.autocomplete_buffer {
+        let mut buffer = self.autocomplete_buffer.write().unwrap();
+        if let Some(ref mut autocompletion) = *buffer {
             self.line_buffer.push_str(autocompletion);
             self.cursor_index = self.line_buffer.len();
-            self.autocomplete_buffer = None;
+            *buffer = None;
         }
     }
 

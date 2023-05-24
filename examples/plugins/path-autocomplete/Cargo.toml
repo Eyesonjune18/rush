@@ -1,0 +1,15 @@
+[package]
+name = "path-autocomplete"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate_type = ["cdylib"]
+
+[profile.release]
+lto = true
+
+[workspace]
+
+[dependencies]
+rush-pdk = { path = "../../../rush-pdk" }

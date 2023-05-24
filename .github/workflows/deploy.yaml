@@ -20,4 +20,3 @@ jobs:
         run: cargo check
       - name: Build | Test
         run: cargo test
-

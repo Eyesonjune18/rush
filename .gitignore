@@ -1,5 +1,7 @@
-/target
+target/
 /out
 demo.md
 .idea
 .DS_STORE
+rush-pdk/Cargo.lock
+rush-plugins-api/Cargo.lock

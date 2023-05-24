@@ -1,3 +1,4 @@
 truncation-factor: false
 history-limit: false
 show-errors: true
+plugin: ./plugins

@@ -1,10 +1,5 @@
 [workspace]
-members = [
-    "rush",
-    "rush-state",
-    "rush-eval",
-    "rush-exec",
-]
+members = ["rush", "rush-state", "rush-eval", "rush-exec", "rush-plugins"]
 
 [workspace.dependencies]
 thiserror = "1.0.40"

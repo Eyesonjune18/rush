@@ -5,7 +5,6 @@ use std::thread;
 use std::time::Duration;
 
 use anyhow::Result;
-
 use rush_state::console::Console;
 use rush_state::path::Path;
 use rush_state::shell::Shell;

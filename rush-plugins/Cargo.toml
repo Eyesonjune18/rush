@@ -1,0 +1,31 @@
+[package]
+name = "rush-plugins"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[features]
+host = [
+    "dep:extism",
+    "dep:snafu",
+    "dep:serde_json",
+    "dep:anyhow",
+    "dep:lazy_static",
+    "dep:oneshot",
+]
+default = ["host"]
+
+[dependencies]
+extism = { version = "0.3.0", optional = true }
+serde = "1.0"
+serde_json = { version = "1.0", optional = true }
+snafu = { version = "0.7.4", optional = true }
+anyhow = { workspace = true, optional = true }
+lazy_static = { version = "1.4.0", optional = true }
+oneshot = { version = "0.1.5", optional = true }
+serde_derive = "1.0"
+
+[dev-dependencies]
+ctor = "0.2.0"
+is_executable = "1.0.1"

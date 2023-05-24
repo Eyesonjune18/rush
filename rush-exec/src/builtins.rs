@@ -8,19 +8,18 @@ Users are free to create their own builtins if they wish to modify the source co
 An 'External' will only have access to its arguments and environment variables, but not the shell's state, mostly for security reasons.
  */
 
-use clap::Parser;
-use fs_err::{self};
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 
 use anyhow::Result;
-
-use crate::builtin_arguments::ListDirectoryArguments;
+use clap::Parser;
+use fs_err::{self};
 use rush_state::console::Console;
 use rush_state::path::Path;
 use rush_state::shell::Shell;
 use rush_state::showln;
 
+use crate::builtin_arguments::ListDirectoryArguments;
 use crate::commands::{Executable, Runnable};
 use crate::errors::BuiltinError;
 use crate::errors::BuiltinError::{
